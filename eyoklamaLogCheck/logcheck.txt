@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# read service logs
+serviceLogDir="/home/scripts"
+echo -e "\t ++++++ Daily log last entry ++++++"
+tail ${serviceLogDir}/daily.log | grep error | sed 's/\[/\n\[\n/g' | sed 's/\]/\n\]/g' | sed 's/,/,\n/g'
+echo -e "\n\n\t ++++++ Base log last entry ++++++"
+tail ${serviceLogDir}/base.log | grep error | sed 's/\[/\n\[\n/g' | sed 's/\]/\n\]/g' | sed 's/,/,\n/g' | sed '/Takvim\ verisi\ donem\ veritaban\\u0131na\ eklenemedi/d' | sed '/Ogrenci\ fotograf\ datasi\ yok/d'
+
+# check database
+envFile="/root/scripts/script_env.txt"
+dbUser="$(grep dbUser ${envFile} | awk '{print $2}')"
+dbPass="$(grep dbPass ${envFile} | awk '{print $2}')"
+prefix="eattendance"
+verifyDate=$(date +%Y-%m-%d)
+activeTerm=`mysql --user="${dbUser}" --password="${dbPass}" -sNe "select per_code from ${prefix}.period where per_active=1;" 2> /dev/null`
+echo -e "\n\n\t ++++++ Checking database for temp table ++++++"
+tempTableEntryCount=`mysql --user="${dbUser}" --password="${dbPass}" -Nse "select count(1) from ${prefix}_${activeTerm}.attendance_student_temp where attst_attendance_date < '${verifyDate}';"`
+echo "Temp table has ${tempTableEntryCount} entries from earlier days"
+

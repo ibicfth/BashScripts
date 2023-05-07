@@ -1,0 +1,55 @@
+#py file
+import os
+import sys, getopt
+import smtplib, ssl
+
+from email.mime.image import MIMEImage
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+if len(sys.argv) < 2:
+    print("Eksik Parametre")
+    sys.exit()
+
+file_name = ''
+
+try:
+    opts, args = getopt.getopt(sys.argv[1:],"hi:",["ifile="])
+except getopt.GetoptError:
+    print 'send_mail.py -i <inputfile>'
+    sys.exit(2)
+for opt, arg in opts:
+    if opt == '-h':
+       print 'send_mail.py -i <inputfile>'
+       sys.exit()
+    elif opt in ("-i", "--ifile"):
+       file_name = arg
+
+if not os.path.exists(file_name):
+    print("Dosya Bulunamadi")
+
+
+port = 587  # For SSL
+#receiver_email = ['XXX','YYY']
+receiver_email = ['XXX']
+sender_email = "XXX"
+sender_password = "XXX"
+message = ""
+
+msg = MIMEMultipart()
+msg['Subject'] = "E-Yoklama - Sunucu Sorunu"
+msg['From'] = sender_email
+msg['To'] = ', '.join(receiver_email)
+msg.preamble = msg['Subject']
+
+with open(file_name, 'r') as f:
+    msg.attach(MIMEText(f.read()))
+    f.close()
+
+smtp_conn = smtplib.SMTP("smtp.yandex.com.tr", timeout=10)
+smtp_conn.starttls()
+smtp_conn.ehlo_or_helo_if_needed()
+smtp_conn.login(sender_email, sender_password)
+smtp_conn.sendmail(sender_email, receiver_email, msg.as_string())
+smtp_conn.quit()
+print("Mail gonderildi")

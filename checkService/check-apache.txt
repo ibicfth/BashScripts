@@ -1,0 +1,47 @@
+#!/bin/bash
+
+# this script will check Apache Server health and try to remedy if a problem occurs
+# if it fails, will send repot as email
+
+# state the directory in which the script will reside and run
+rootDir="/root/scripts/serviceCheck/"
+# create an id for script and its related files; format is day-hour-minute-seconds
+timestampID=$(date +%d%H%M%S)
+cd ${rootDir}
+# remember to do pruning before this script
+find ${rootDir} -type f -name "apache-log-*" -mtime +0 -delete
+# create new files periodically
+logFile="apache-log-$(date +%Y-%m-%d-%H).log"
+emailMessage="emailMessage-${timestampID}"
+smsMessage="smsMessage-${timestampID}"
+
+if !( apachectl status > /dev/null ); then
+	echo -e "\n\n\n\n" >> ${logFile}
+	echo "--------------------------------------------------------------" >> ${logFile}
+	systemctl status -l httpd >> ${logFile}
+	echo "Trying to restart apache service! -- $(date +%Y-%m-%d-%T)" | tee -a ${logFile}
+	systemctl restart httpd &
+	sleep 65
+	apacheStatus=$(systemctl status -l httpd | grep "Active:" | awk '{$1=""}1')
+	if !( apachectl status > /dev/null ); then
+		echo -e "Apache server restart failed at $(date +%Y-%m-%d-%T)\nApache status is: ${apacheStatus}" | tee -a ${logFile} ${emailMessage}
+		cat messageInsert >> ${emailMessage}
+		python send-email.py -i ${emailMessage}
+		rm -f ${emailMessage}
+		sleep 130
+		apacheStatus=$(systemctl status -l httpd | grep "Active:" | awk '{$1=""}1')
+		if !( apachectl status > /dev/null ); then
+			cat messageInsert >> ${smsMessage}
+			echo "Apache durumu: ${apacheStatus}" >> ${smsMessage}
+			python SMSsendviaAPI.py -i ${smsMessage}
+			rm -f ${smsMessage}
+		else
+			echo "Apache recovered, status is: ${apacheStatus}" | tee -a ${logFile}
+		fi
+	else
+		echo "successful restart" | tee -a ${logFile}
+	fi
+else
+	echo -e "\napache seems to be working at $(date +%F_%R)\n" >> ${logFile}
+fi
+

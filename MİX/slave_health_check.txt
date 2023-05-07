@@ -1,0 +1,8 @@
+# use the env file for sensitive data retrieval
+envFile="hc_env.txt"
+slaveUser="$(grep slaveUser ${envFile} | awk '{print $2}')"
+slavePass="$(grep slavePass ${envFile} | awk '{print $2}')"
+slavePort="$(grep slavePort ${envFile} | awk '{print $2}')"
+slaveHost="$(grep slaveHost ${envFile} | awk '{print $2}')"
+
+mysql --user="${slaveUser}" --host="${slaveHost}" --port="${slavePort}" --password="${slavePass}" -e 'SHOW SLAVE STATUS \G;'

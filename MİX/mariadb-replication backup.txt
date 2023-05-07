@@ -1,0 +1,45 @@
+#!/bin/bash
+
+#variables
+Mdate=`date +%F`
+backupRootDir="/yedek"
+backupFile="replica_backup_${Mdate}.sql"
+archiveFile="replica_backup_${Mdate}.zip"
+logFile="backup_log_${Mdate}.txt"
+# database list can be defined...
+# manual
+# dbList="bermudadb tcareedb tcaree_log"
+# or with mysql connection
+dbList=`mysql -uBACKUPUSER -pPASSWORD -ANse "SELECT GROUP_CONCAT(SCHEMA_NAME SEPARATOR ' ') FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ('mysql','information_schema','performance_schema','sys');"`
+
+cd ${backupRootDir}
+echo "starting full backup for slave, time: $(date +'%d.%m.%Y %H:%M:%S')" >> ${logFile}
+echo "master status, before backup:" >> ${logFile}
+mysql -e "show master status;" >> ${logFile}
+echo -e "Database list is: \n${dbList}" >> ${logFile}
+# dump
+mysqldump -uBACKUPUSER -pPASSWORD --routines --allow-keywords -F --master-data=2 --databases ${dbList} > ${backupFile}
+echo "master status, after backup:" >> ${logFile}
+mysql -e "show master status;" >> ${logFile}
+echo "finished full backup for slave, time: $(date +'%d.%m.%Y %H:%M:%S')" >> ${logFile}
+
+zip ${archiveFile} ${backupFile}
+chown cvzadmin:cvzadmin ${archiveFile}
+head -30 ${backupFile}
+tail ${backupFile}
+rm -f ${backupFile}
+
+
+#--allow-keywords
+# -F for --flush-logs
+# --master-data=2 adds master information as a comment, use 1 for non-comment info
+# do not use --single-transaction, merges all dump into a single transaction
+
+
+
+#mysqldump -uBACKUPUSER -pPASSWORD --routines --allow-keywords --flush-logs --master-data --databases ${DbName} ${DbName2} tcaree_log > tripledump_${Mdate}.sql
+#mysqldump -uBACKUPUSER -pPASSWORD ${DbName} deleted_rows > /yedek/deleted_rows_tcaree_${Mdate}.sql
+#mysqldump -uBACKUPUSER -pPASSWORD ${DbName2} deleted_rows > /yedek/deleted_rows_bermuda_${Mdate}.sql
+#mysqldump -uBACKUPUSER -pPASSWORD tcaree_log > /yedek/tcaree_log_${Mdate}.sql
+#mysqldump -uBACKUPUSER -pPASSWORD --all-databases > /yedek/all_${Mdate}.sql
+

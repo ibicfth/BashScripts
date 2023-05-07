@@ -1,0 +1,26 @@
+#!/bin/bash
+Mdate=$(date +%Y%m%d)
+BackupDir="/yedek/backup_database/"
+DbName="tcareedb"
+DbName2="bermudadb"
+LogFile="${BackupDir}/prune_log_${Mdate}.txt"
+
+echo 'tcaree pruning started!' >> ${LogFile}
+echo 'deleted file(s) list:' >> ${LogFile}
+find ${BackupDir} -name "*${DbName}*" -type f -mtime +4 >> ${LogFile}
+find ${BackupDir} -name "*${DbName}*" -type f -mtime +4 -delete
+
+echo 'bermuda pruning started!' >> ${LogFile}
+echo 'deleted file(s) list:' >> ${LogFile}
+find ${BackupDir} -name "*${DbName2}*" -type f -mtime +4 >> ${LogFile}
+find ${BackupDir} -name "*${DbName2}*" -type f -mtime +4 -delete
+
+# also delete old log files
+find ${BackupDir} -name "*log*" -type f -mtime +6 >> ${LogFile}
+find ${BackupDir} -name "master*" -type f -mtime +13 >> ${LogFile}
+find ${BackupDir} -name "*log*" -type f -mtime +6 -delete
+find ${BackupDir} -name "master*" -type f -mtime +13 -delete
+
+echo "completed at $(date +'%d.%m.%Y %H:%M:%S')" >> ${LogFile}
+echo -e "\n\n\n\n\n" >> ${LogFile}
+wall success

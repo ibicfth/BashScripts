@@ -1,0 +1,98 @@
+#!/bin/bash
+# psono backup script
+cd /home/scripts/psono_backup
+
+# general variables
+backupRoot="/yedek/psono"
+logfile="${backupRoot}/logs/backup-$(date +%F).log"
+backupDir="${backupRoot}/$(date +%Y-%B/%d)"
+serverContainerName=psono-server
+postgresContainerName=psonodb
+serverContainer="$(docker ps -aq --filter NAME=${serverContainerName})"
+postgresContainer="$(docker ps -aq --filter NAME=${postgresContainerName})"
+# make sure the files and folders exist
+mkdir -p ${backupDir}
+touch ${logfile}
+
+# remove temp backup file and report from yesterday
+rm -f ${backupRoot}/psono_backup.zip
+rm -f ${backupRoot}/mailReport
+touch ${backupRoot}/mailReport
+
+# start logging & reporting
+echo "--------------------------------------------------------------" >> ${logfile}
+echo "Started Psono server backup at $(date +%F_%R)" | tee -a ${logfile} ${backupRoot}/mailReport
+echo "Detected container ID for ${serverContainerName} is ${serverContainer}" >> ${logfile}
+echo "Detected container ID for ${postgresContainerName} is ${postgresContainer}" >> ${logfile}
+
+# read credentials
+envFile="/home/scripts/hc_env.txt"
+psonoDbName="$(grep psonoDbName ${envFile} | awk '{print $2}')"
+psonoPsqlUser="$(grep psonoPsqlUser ${envFile} | awk '{print $2}')"
+psonoPsqlPass="$(grep psonoPsqlPass ${envFile} | awk '{print $2}')"
+settingsDir="/srv/psono/server/config"
+
+# and combine them into .env
+# can also use date +%F_%R if taking multiple backups in a day
+cat <<EOF > .env
+PSONO_BACKUP_DATABASE_NAME=${psonoDbName}
+PSONO_BACKUP_DATABASE_USER=${psonoPsqlUser}
+PSONO_BACKUP_DATABASE_PASSWORD=${psonoPsqlPass}
+PSONO_BACKUP_TIMESTAMP=\$(date +%F)
+PSONO_BACKUP_PATH=/yedek/psono
+EOF
+
+echo "Created env file, starting backup" >> ${logfile}
+
+# copy yaml into backup folder
+cp -a ${settingsDir}/settings.yaml ${backupDir}/settings.yaml
+if [[ -f ${backupDir}/settings.yaml ]]; then
+ echo -e "------\nSettings file copied successfully\n------" | tee -a ${logfile} ${backupRoot}/mailReport
+else
+ echo -e "++++++\nFailed! to make a copy of settings file at $(date +%F_%R)\n++++++" | tee -a ${logfile} ${backupRoot}/mailReport
+fi
+
+echo "Copying script into database container at $(date +%F_%R)" >> ${logfile}
+# get backup script from psono container and edit
+docker cp ${serverContainer}:/root/var/backup/backup .
+sed -i '/SETTINGS/d' backup
+echo -e "\n\nunset PGPASSWORD\n" >> backup
+# copy other files into postgres and initiate backup
+docker cp .env ${postgresContainer}:/tmp/
+docker cp backup ${postgresContainer}:/tmp/backupPsono
+docker exec ${postgresContainer} bash -c "chmod +x /tmp/backupPsono"
+docker exec ${postgresContainer} bash -c "cd /tmp && /tmp/backupPsono"
+docker cp ${postgresContainer}:/yedek/psono/backup_$(date +%F).complete/db.sql.gz ${backupDir}/psonodb-backup.sql.gz
+# verify integrity of the backup file
+lastLine=$(gunzip -c ${backupDir}/psonodb-backup.sql.gz | tail | grep PostgreSQL | cut -c 4-)
+verifyStr="PostgreSQL database dump complete"
+if [[ $lastLine = $verifyStr ]]; then
+ echo -e "Dump completed successfully!\n------ " | tee -a ${logfile} ${backupRoot}/mailReport
+ # create a zip to send
+ zip -qr ${backupRoot}/psono_backup.zip ${backupDir}
+ chown cvzadmin:cvzadmin ${backupRoot}/psono_backup.zip
+ chown cvzadmin:cvzadmin ${backupRoot}/mailReport
+else
+ echo "Dump Failed! or interrupted! at $(date +%F_%R)" | tee -a ${logfile} ${backupRoot}/mailReport
+fi
+
+echo "completed backup process, starting house cleaning at $(date +%F_%R)" >> ${backupRoot}/mailReport
+# now can send the report as email
+# python ../send_mail.py -i ${backupRoot}/mailReport
+
+
+echo "Cleaning created files " >> ${logfile}
+rm -f .env
+rm -f backup
+# removing report at the beginning for now, since we are sending the report with scp
+# rm -f ${backupRoot}/mailReport
+docker exec ${postgresContainer} bash -c "rm -rf /yedek"
+docker exec ${postgresContainer} bash -c "rm -rf /tmp/.env"
+docker exec ${postgresContainer} bash -c "rm -rf /tmp/backupPsono"
+echo -e "Removed files from server: \n.env,\nbackup,\nmailReport"  >> ${logfile}
+find /yedek/psono/* -mtime +13  >> ${logfile}
+find /yedek/psono/* -mtime +13 -delete
+echo -e "\nRemoved inside database container: \n/yedek/,\n/tmp/.env,\n/tmp/backupPsono"  >> ${logfile}
+
+echo -e "\nProcess completed! \n\n\n\n\n" >> ${logfile}
+

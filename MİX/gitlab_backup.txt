@@ -1,0 +1,44 @@
+#!/bin/bash
+# normal backup command only capsulates repository and metadata files,
+# for config files use another command,
+# for ssh keys, take extra step to copy them into new machine/container
+
+Mdate=$(date +%Y_%m_%d)
+LogFile="/home/ceviz/dailygitbackup/backup_log_${Mdate}.txt"
+
+# remove old backup file
+echo "Old backup files to be deleted:" >> ${LogFile}
+ls -al /home/ceviz/dailygitbackup/*gitlab* >> ${LogFile}
+rm -f /home/ceviz/dailygitbackup/*gitlab*
+echo "Purged old temporary backup files : $(date +'%d.%m.%Y %H:%M:%S')" >> ${LogFile}
+# also delete old log files
+echo "Deleted log files:" >> ${LogFile}
+find /home/ceviz/dailygitbackup/ -maxdepth 1 -name "*log*" -type f -mtime +6 >> ${LogFile}
+find /home/ceviz/dailygitbackup/ -maxdepth 1 -name "*log*" -type f -mtime +6 -delete
+echo -e "\n\n\n\n\n" >> ${LogFile}
+
+# normal backup
+wall 'starting GitLab backup'
+echo "GitLab Backup has been started at $(date +'%d.%m.%Y %H:%M:%S')" >> ${LogFile}
+docker exec -t CvZgitlab gitlab-backup create
+echo "GitLab Backup has been completed at $(date +'%d.%m.%Y %H:%M:%S')" >> ${LogFile}
+
+# ---   config backup   ---
+# command: gitlab-ctl backup-etc
+# docker exec -t CvZgitlab /bin/sh -c 'gitlab-ctl backup-etc && cd /etc/gitlab/config_backup && cp $(ls -t | head -n1) /var/opt/gitlab/backups/'
+# --- prune old backups ---
+# change config in gitlab.rb file, this lets backup command to delete old files
+# gitlab_rails['backup_keep_time'] = 604800 for 7 days (in seconds)
+# below command deletes old config files, gitlab does this automatically
+# gitlab-ctl backup-etc --delete-old-backups
+
+# move backup file to another location to safely change its properties
+cp /home/githome/data/backups/*${Mdate}* /home/ceviz/dailygitbackup/
+# change ownership of the backup file to send
+chown ceviz:ceviz /home/ceviz/dailygitbackup/*${Mdate}*
+echo "New temporary backup file is ready : $(date +'%d.%m.%Y %H:%M:%S')" >> ${LogFile}
+
+
+
+
+wall success

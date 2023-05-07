@@ -1,0 +1,292 @@
+#!/bin/bash
+
+# On a fresh server (installing single mariadb server and client)
+# This file intented as both a document and an installation script
+# Assumes the CentOS 7 with Linux kernel 3.10
+
+# required actions from user:
+# install & check if firewalld, selinux and fail2ban are installed, enabled
+# check "df -h" to decide where to place the backup files and database files
+# tcaree backup zip file takes about 4G and sql file takes about 25G disk space (2022 Jan)
+# tcaree database takes about 50G disk space (2022 Jan)
+# if you need to change database datadir, do so after full installation, and refer to change datadir document!
+#		if you choose a /home directory for any reason, also change unix service file by
+#		systemctl edit mariadb 
+#		change "ProtectHome = true" to "ProtectHome = false"
+#		systemctl daemon-reload 
+#		also chown -R mysql:mysql /home/new-directory
+#		if you also need to change selinux context:
+#		semanage fcontext -a -t mysqld_db_t "/mnt/mysql-data(/.*)?"
+#		restorecon -R /mnt/mysql-data
+# obtain backup files from cvz_linux or from last database server via scp, use passwords at this point
+#		prefer last database server as it will have better internet connection
+# also take backups of deleted_rows and expire_log as they are not included in normal backups
+
+# some colour codes to be used
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+# script variables
+Mdate=$(date +%Y-%m-%d)
+LogFile="/tmp/mariadb_install_log_${Mdate}.txt"
+
+echo -e "Current working directory is ${RED}$(pwd)${NC}"
+echo -e "${RED}Abort now${NC} if you do not wish to proceed!"
+sleep 10
+echo "Script initiated at $(date +'%d.%m.%Y %H:%M:%S')" >> ${LogFile}
+echo -e "\n\n\n\n\n" >> ${LogFile}
+# always start with general updates
+yum -y update
+yum -y install zip unzip rsync
+# add repo file for MariaDB 10.6.*
+cat <<EOF | sudo tee /etc/yum.repos.d/MariaDB.repo
+[mariadb]
+name = MariaDB
+baseurl = http://yum.mariadb.org/10.6/centos7-amd64
+gpgkey=https://yum.mariadb.org/RPM-GPG-KEY-MariaDB
+gpgcheck=1
+EOF
+yum makecache fast
+echo "Changed repo info for MariaDB, starting install : $(date +'%d.%m.%Y %H:%M:%S')" >> ${LogFile}
+# configure server time
+timedatectl >> ${LogFile}
+yum -y install chrony
+systemctl enable chronyd
+systemctl start chronyd
+timedatectl set-ntp true
+# set local time zone to UTC+3
+timedatectl set-timezone "Europe/Istanbul"
+timedatectl >> ${LogFile}
+echo "Changed timezone to UTC+3 and enabled ntp" >> ${LogFile}
+mkdir -p /var/log/mariadb
+chown mysql:mysql /var/log/mariadb
+yum install MariaDB-server MariaDB-client MariaDB-backup MariaDB-common galera-4 MariaDB-shared
+echo "Installed MariaDB : $(date +'%d.%m.%Y %H:%M:%S')" >> ${LogFile}
+yum -y update
+rpm -qi MariaDB-server >> ${LogFile}
+echo -e "\n\n\n\n\n" >> ${LogFile}
+# configuration files
+cp /etc/my.cnf /etc/my.cnf.default
+# can also use sed command to add lines in-between a file, for example:
+#sed -i "/\[client-server\]/a\ \n\[client\]\ndefault-character-set=utf8mb4\nport=3306\nsocket=/var/lib/mysql/mysql.sock" /etc/my.cnf
+cat <<EOF | sudo tee /etc/my.cnf
+[client]
+default-character-set=utf8mb4
+port=3306
+socket=/var/lib/mysql/mysql.sock
+
+[mysql]
+default-character-set=utf8mb4
+
+[mysqldump]
+quick
+
+[mysqlhotcopy]
+interactive-timeout
+
+[mysqld_safe]
+log_error=/var/log/mariadb/mariadb.err
+pid_file=/var/run/mariadb/mariadb.pid
+
+[mysqld]
+sql-mode=''
+transaction-isolation = READ-COMMITTED
+skip-name-resolve=1
+skip-external-locking
+skip-host-cache
+symbolic-links=0
+#innodb_stats_on_metadata = 0 # should be already 0
+#performance_schema = ON
+datadir=/var/lib/mysql
+socket=/var/lib/mysql/mysql.sock
+log_error=/var/log/mariadb/mariadb.err
+log_warnings
+
+
+# Char-Set
+collation-server = utf8mb4_turkish_ci
+init-connect='SET NAMES utf8mb4'
+character-set-server = utf8mb4
+
+
+# INNODB
+innodb_flush_method = O_DIRECT
+innodb_buffer_pool_size = 10G # 70% of RAM
+innodb_change_buffer_max_size = 50 # default is 25
+innodb_log_file_size = 2G # 25% of innodb_buffer_pool_size
+innodb_lock_wait_timeout = 10
+innodb_log_buffer_size = 16M
+innodb_flush_log_at_trx_commit = 0   # default is 1 (1-1 commit-transaction), decreases performance, (0 is transaction per second)
+
+
+# MYISAM
+myisam-recover-options = FORCE,BACKUP
+myisam_sort_buffer_size = 128M
+myisam_max_sort_file_size = 1G
+myisam_repair_threads = 1
+key_buffer_size = 4M
+
+
+# General Limits
+max_allowed_packet = 512M
+#max_connect_errors = 1000000 # default is 100
+max_heap_table_size = 64M
+query_cache_type = 0
+query_cache_size = 0
+#query_cache_limit = 2M
+#query_cache_min_res_unit = 2k
+max_connections = 250 # last real max connection number was 97
+back_log = 50
+#max_execution_time = 300
+#thread_cache_size  = 100
+open_files_limit = 65535
+table_definition_cache = 1024
+table_open_cache = 2048
+wait_timeout = 8800
+net_read_timeout = 8800
+net_write_timeout = 8800
+interactive_timeout = 8800
+sort_buffer_size = 4M
+read_buffer_size = 4M
+join_buffer_size = 128M
+tmp_table_size = 64M
+read_rnd_buffer_size = 8M
+bulk_insert_buffer_size = 64M
+
+
+# BINARY LOGGING #
+sql_log_bin = 0
+#log_bin   = /var/log/mariadb/mysql-bin.log
+#binlog-do-db = tcareedb
+#expire_logs_days = 10
+#max_binlog_size = 512M
+#binlog_cache_size = 1M
+#sync_binlog = 0 # 1 is the safest, but slowest, flushes after each write
+#binlog-format  = mixed
+#skip-slave-start
+log_bin_trust_function_creators = 1
+EOF
+echo "MariaDB config file updated : $(date +'%d.%m.%Y %H:%M:%S')" >> ${LogFile}
+systemctl start mariadb
+systemctl enable mariadb
+# check "journalctl -xe" for any warnings and errors
+# every step following the below command is a recommended security configuration
+mariadb-secure-installation
+# start mysql session now and check the time stamp
+# SELECT CURRENT_TIME;
+# unless specified, new database name will be tcareedb and tcaree_log
+# inside mysql session, give these commands for database and user creation;
+# CREATE DATABASE tcareedb CHARACTER SET = 'UTF8mb4' COLLATE = 'UTF8mb4_TURKISH_CI';
+# CREATE DATABASE tcaree_log CHARACTER SET = 'UTF8mb4' COLLATE = 'UTF8mb4_TURKISH_CI';
+# ALTER DATABASE mysql CHARACTER SET = 'UTF8mb4' COLLATE = 'UTF8mb4_TURKISH_CI';
+# CREATE USER 'cvzadmin'@'%' IDENTIFIED BY 'cvz_password';
+# GRANT ALL PRIVILEGES ON *.* TO 'cvzadmin'@'%' WITH GRANT OPTION;
+# CREATE USER 'tcaree_user'@'77.223.142.207' IDENTIFIED BY 'tcru_password';
+# CREATE USER 'tcaree_user'@'31.210.52.212' IDENTIFIED BY 'tcru_password';
+# GRANT ALL PRIVILEGES ON tcareedb.* TO 'tcaree_user'@'77.223.142.207';
+# GRANT ALL PRIVILEGES ON tcaree_log.* TO 'tcaree_user'@'77.223.142.207';
+# GRANT ALL PRIVILEGES ON tcareedb.* TO 'tcaree_user'@'31.210.52.212';
+# GRANT ALL PRIVILEGES ON tcaree_log.* TO 'tcaree_user'@'31.210.52.212';
+# CREATE USER 'backup'@'78.186.250.188' IDENTIFIED BY 'password';
+# GRANT SELECT, RELOAD, PROCESS, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT, SHOW VIEW, EVENT, TRIGGER ON *.* TO 'backup'@'78.186.250.188';
+# CREATE USER 'tcaree_transfer'@'%' IDENTIFIED BY 'password';
+# GRANT SELECT, INSERT, UPDATE, DELETE ON tcareedb.* TO 'tcaree_transfer'@'%';
+# GRANT INSERT ON tcaree_log.* TO 'tcaree_transfer'@'%';
+# GRANT EXECUTE ON PROCEDURE tcareedb.`delete_records_by_company` TO 'tcaree_transfer'@'%';
+# GRANT EXECUTE ON PROCEDURE tcareedb.`delete_record` TO 'tcaree_transfer'@'%';
+# GRANT EXECUTE ON FUNCTION tcareedb.`clear_turkish` TO 'tcaree_transfer'@'%';
+# FLUSH PRIVILEGES;
+# database should be ready for restoration now
+# you can copy below lines into a new file to use it as a script
+
+# # check if any utf8 related problems exist in the backup file
+# # takes /path/to/backup_file.sql as input
+#
+# backup_file=$1
+# LogFile="/tmp/mariadb_install_log_${Mdate}.txt"
+# # colour codes
+# RED='\033[0;31m'
+# GREEN='\033[0;32m'
+# NC='\033[0m' # No Color
+# 
+# wall "Initiating replace script!"
+# echo -e "backup file is ${GREEN}$backup_file${NC} :"
+# echo -e "${RED}Abort now${NC} if you do not wish to proceed!"
+# sleep 5
+# echo "checking ci types : $(date +'%d.%m.%Y %H:%M:%S')" | tee -a ${LogFile}
+# if grep -c general_ci $backup_file; then
+# sed -i 's/general_ci/turkish_ci/g' $backup_file
+# echo "general_ci changed into turkish_ci : $(date +'%d.%m.%Y %H:%M:%S')" | tee -a ${LogFile}
+# fi
+# echo "checking utf8 words : $(date +'%d.%m.%Y %H:%M:%S')" | tee -a ${LogFile}
+# if grep -wc utf8 $backup_file; then
+# sed -i 's/\<utf8\>/utf8mb4/g' $backup_file
+# echo "utf8 changed into utf8mb4 : $(date +'%d.%m.%Y %H:%M:%S')" | tee -a ${LogFile}
+# fi
+# echo "checking utf8_ entries : $(date +'%d.%m.%Y %H:%M:%S')" | tee -a ${LogFile}
+# if grep -c utf8_ $backup_file; then
+# sed -i 's/utf8_/utf8mb4_/g' $backup_file
+# echo "utf8_ changed into utf8mb4_ : $(date +'%d.%m.%Y %H:%M:%S')" | tee -a ${LogFile}
+# fi
+# echo "checking utf8mb3 words : $(date +'%d.%m.%Y %H:%M:%S')" | tee -a ${LogFile}
+# if grep -c utf8mb3 $backup_file; then
+# sed -i 's/utf8mb3/utf8mb4/g' $backup_file
+# echo "utf8mb3 changed into utf8mb4 : $(date +'%d.%m.%Y %H:%M:%S')" | tee -a ${LogFile}
+# fi
+# echo "checking utf8mb3_ entries : $(date +'%d.%m.%Y %H:%M:%S')" | tee -a ${LogFile}
+# if grep -c utf8mb3_ $backup_file; then
+# sed -i 's/utf8mb3_/utf8mb4_/g' $backup_file
+# echo "utf8mb3_ changed into utf8mb4_ : $(date +'%d.%m.%Y %H:%M:%S')" | tee -a ${LogFile}
+# fi
+# # now you are ready to initiate the restore
+# echo -e "starting restore process : $(date +'%d.%m.%Y %H:%M:%S')" | tee -a ${LogFile}
+# echo -e "${RED}Abort now${NC} if you do not wish to proceed!" | tee -a ${LogFile}
+# sleep 10
+# mysql --init-command="SET SESSION FOREIGN_KEY_CHECKS=0;SET UNIQUE_CHECKS=0;SET AUTOCOMMIT=0;" -uroot tcareedb < $backup_file
+# mysql --init-command="SET SESSION FOREIGN_KEY_CHECKS=0;SET UNIQUE_CHECKS=0;SET AUTOCOMMIT=0;" -uroot tcareedb < $backup_file
+# mysql --init-command="SET SESSION FOREIGN_KEY_CHECKS=0;SET UNIQUE_CHECKS=0;SET AUTOCOMMIT=0;" -uroot tcareedb < $backup_file
+# echo "Finished restoration! : $(date +'%d.%m.%Y %H:%M:%S')" | tee -a ${LogFile}
+
+# now setup backup process with mail trigger
+# use mysqlautobackup at cevizsoft for small db backups
+# for big db;
+# refer to sample backup script for backup_script.sh
+# again check with disk space for next steps
+# mkdir -p /yedek/backup_scripts/
+# mkdir -p /yedek/backup_database/
+# cd /yedek/backup_scripts/
+# touch backup_database.sh send_mail.py check_backup_health.py prune_backup.sh
+# chmod +x backup_database.sh prune_backup.sh
+# restore process usually starts around 3AM, pruning takes place around 10AM, change /etc/crontab accordingly
+# 00 03 * * * root /yedek/backup_scripts/backup_database.sh
+# 00 10 * * * root /yedek/backup_scripts/prune_backup.sh
+# now create a .ssh directory either via open ssl or mkdir
+# ssh-keygen -t rsa
+# establish pubkey authentication between servers
+# (inside ceviz linux, or other server that will receive the backup)
+# ssh-copy-id -p <SSH_PORT> -i .ssh/id_rsa.pub cvzadmin@<NEW_SERVER_IP>
+# now check if ssh connection can be established without password
+# ssh -p <SSH_PORT> cvzadmin@<NEW_SERVER_IP>
+# if not successful, check if file permissions are correct (u=rwX,go=), and
+# restorecon -R -v .ssh (for selinux)
+## if you want to do it manually:
+# scp /linux/path/to/id_rsa.pub cvzadmin@"new_server_IP":/anywhere
+# (back to new server)
+# cat /anywhere/id_rsa.pub >> .ssh/authorized_keys
+# chmod 600 .ssh/authorized_keys
+# now you should be able to scp & ssh from linux to new server without pass
+
+# SOME ADVICES:
+# if disk space allows, do not remove sql file for a few days and check zip file integrity with "zip -T" and "unzip -t"
+# after restoration, restart mysql with a new config
+# after backup config change ssh port
+# refer to change_port.sh in scripts
+
+
+
+
+
+
+
+
+

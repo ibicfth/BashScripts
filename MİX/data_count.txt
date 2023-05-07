@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# This script lists databases inside the mysql server and counts table data,
+#  compare this data with live database to verify integrity
+
+# general variables
+logFile="/tmp/integrity.report"
+# this script reads mysql user and password from a tmpenv.list file
+# file's contents should be user: ... \n pass:...
+if (cat ./tmpenv.list >/dev/null); then
+	user=`grep user ./tmpenv.list | awk '{print $2}'`
+	pass=`grep pass ./tmpenv.list | awk '{print $2}'`
+else 
+	user=root
+	pass=""
+fi
+
+echo "Database list:" > ${logFile}
+# create a list of databases, do not list base databases
+dbList=()
+DB_LIST=`mysql --user="${user}" --password="${pass}" -Nse "SELECT GROUP_CONCAT(SCHEMA_NAME ORDER BY SCHEMA_NAME SEPARATOR ' ') FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ('mysql','information_schema','performance_schema','sys');"`
+echo "${DB_LIST}" >> ${logFile}
+dbList+=(${DB_LIST})
+echo -e "\n\n\n\n\n" >> ${logFile}
+
+# create a table list for each database and count their data
+for db in ${dbList[@]}; do
+ tablesList=()
+ echo "Table list for ${db}:" >> ${logFile}
+ dbTables=`mysql --user="${user}" --password="${pass}" -Nse "SELECT GROUP_CONCAT(TABLE_NAME ORDER BY TABLE_NAME SEPARATOR ' ') FROM information_schema.TABLES WHERE TABLE_SCHEMA='${db}';"`
+ echo "${dbTables}" >> ${logFile}
+ tablesList+=(${dbTables})
+ echo "Table counts:" >> ${logFile}
+ for table in ${tablesList[@]}; do
+  mysql --user="${user}" --password="${pass}" -Nse "SELECT count(1) FROM ${db}.${table};" >> ${logFile}
+ done
+ echo -e "\n\n" >> ${logFile}
+done
+
+
+# when needed to select counts manually, use this template
+#SELECT
+#  (SELECT COUNT(*) FROM table) as tableCount, 
+#  (SELECT COUNT(*) FROM table) as tableCount,
+#  (SELECT COUNT(*) FROM table) as tableCount,
+#  (SELECT COUNT(*) FROM table) as tableCount,
+#  (SELECT COUNT(*) FROM table) as tableCount,
+#  (SELECT COUNT(*) FROM table) as tableCount,
+#  (SELECT COUNT(*) FROM table) as tableCount,
+#  (SELECT COUNT(*) FROM table) as tableCount,
+#  (SELECT COUNT(*) FROM table) as tableCount;
+
+

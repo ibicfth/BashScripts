@@ -1,0 +1,107 @@
+# this file is used for pulling general system health check
+logfile="/tmp/health_check.log"
+# use the env file for sensitive data retrieval
+envFile="hc_env.txt"
+dbUser="$(grep dbUser ${envFile} | awk '{print $2}')"
+dbPass="$(grep dbPass ${envFile} | awk '{print $2}')"
+
+echo "system info:" > ${logfile}
+echo "logged in users: " >> ${logfile}
+w | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+# check mysql, firewall and selinux status
+systemctl -l status mysql | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+systemctl -l status firewalld | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+firewall-cmd --list-all | grep -v reject | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+echo "SElinux is : " >> ${logfile}
+getenforce | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+# check ram - cpu - disk usage
+free -h | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+df -h | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+# also list database file sizes
+echo "Total database size: " >> ${logfile}
+du -sh /var/lib/mysql/ | tee -a ${logfile}
+echo "database sizes: " >> ${logfile}
+du -sh /var/lib/mysql/* | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+echo "var log size: " >> ${logfile}
+du -sh /var/log/ | tee -a ${logfile}
+echo "mariadb log sizes: " >> ${logfile}
+du -sh /var/log/mariadb/* | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+
+# network related info
+echo "service-port list: " >> ${logfile}
+ss -tulnp | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+echo "connections: " >> ${logfile}
+netstat -ntu | awk '{print $5}' | cut -d: -f1 | sort | uniq -c | sort -nr | head -15 | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+# list used fail2ban jails
+fail2ban-client status | tee -a ${logfile}
+fail2ban-client status sshd | tee -a ${logfile}
+fail2ban-client status mariadb | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+
+# user info
+echo "all users: " >> ${logfile}
+cat /etc/passwd | awk -F: '{print $1}' | sort | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+echo "users with login: " >> ${logfile}
+cat /etc/passwd | grep -v nologin | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+echo "db users: " >> ${logfile}
+# mysql --user="${dbUser}" --password="${dbPass}" --database="$database" --execute="DROP DATABASE $user; CREATE DATABASE $database;" | tee -a ${logfile}
+mysql --execute="select user,host from mysql.user;" | awk 'NR>1 {print $1 "@" $2}' | sort | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+# also list databases
+echo "databases: " >> ${logfile}
+mysql --execute="show databases;"  | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+
+# control failed attempt entries
+echo "invalid user names: " >> ${logfile}
+cat /var/log/secure* | grep "for invalid user" | awk '{print $11}' | sort | uniq | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+echo "valid ssh user names that were tried: " >> ${logfile}
+cat /var/log/secure* | grep "Failed password" | grep -v "invalid" | grep -v "root" | awk '{print $9}' | sort | uniq | tee -a ${logfile}
+echo -e "\n\n\n\n\n" >> ${logfile}
+# echo "valid proftp names that were tried: " >> ${logfile}
+# cat /var/log/secure* | grep "Login failed" | grep -v "root" | awk '{print $10}' | sort | uniq | tee -a ${logfile}
+# echo -e "\n\n\n\n\n" >> ${logfile}
+
+# this part requires a working slave database and monitor user
+echo "Slave status:" >> ${logfile}
+bash /home/scripts/slave_health_check.sh | tee -a ${logfile}
+# /yedek/backup_scripts
+echo -e "\n\n\n\n\n" >> ${logfile}
+
+# also check containers if docker is installed
+echo "Container info:" >> ${logfile}
+docker ps -a >> ${logfile}
+echo "" >> ${logfile}
+echo "Container Images:" >> ${logfile}
+docker images >> ${logfile}
+echo "" >> ${logfile}
+echo "Container Volumes:" >> ${logfile}
+docker volume ls >> ${logfile}
+echo "" >> ${logfile}
+
+# if there are docker databases, check them
+bash /yedek/backup_scripts/container_health_check.sh
+
+# sample env file:
+## this file is used by system health check script
+## it seperates sensitive info from running script
+#
+#dbUser= 
+#dbPass= 
+#
+#scriptDir= /root
+#mysqlDir= /var/lib/mysql

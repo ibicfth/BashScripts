@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# this script will check Apache Server health and try to remedy if a problem occurs
+# if it fails, will send repot as email
+
+# state the directory in which the script will reside and run
+rootDir="/root/scripts/serviceCheck/"
+cd ${rootDir}
+# remember to do pruning before this script
+find ${rootDir} -type f -name "mariadb-log-*" -mtime +0 -delete
+# create an id for script and its related files; format is day-hour-minute-seconds
+timestampID=$(date +%d%H%M%S)
+# create new files periodically
+logFile="mariadb-log-$(date +%Y-%m-%d-%H).log"
+emailMessage="emailMessage-${timestampID}"
+smsMessage="smsMessage-${timestampID}"
+
+if !( mysqladmin ping >/dev/null 2>&1 ); then
+	echo -e "\n\n\n\n" >> ${logFile}
+	echo "--------------------------------------------------------------" >> ${logFile}
+	systemctl status -l mysql | tail -7 >> ${logFile}
+	echo "Trying to restart MariaDB service! -- $(date +%Y-%m-%d-%T)" | tee -a ${logFile}
+	systemctl restart mysql &
+	sleep 65
+	mariadbStatus=$(systemctl status -l mysql | grep "Active:" | awk '{print $2}')
+	if !( mysqladmin ping >/dev/null 2>&1 ); then
+		echo -e "MariaDB server restart failed at $(date +%Y-%m-%d-%T)\nMariaDB status is: ${mariadbStatus}" | tee -a ${logFile} ${emailMessage}
+		systemctl status -l mysql | tail -7 >> ${logFile}
+		cat messageInsert >> ${emailMessage}
+		python send-email.py -i ${emailMessage}
+		rm -f ${emailMessage}
+		sleep 130
+		mariadbStatus=$(systemctl status -l mysql | grep "Active:" | awk '{print $2}')
+		if !( mysqladmin ping >/dev/null 2>&1 ); then
+			echo -e "\nMariaDB error log tail:"
+			tail /var/log/mariadb/mariadb.err | grep ERROR >> ${logFile}
+			cat messageInsert >> ${smsMessage}
+			echo "MariaDB durumu: ${mariadbStatus}" >> ${smsMessage}
+			python SMSsendviaAPI.py -i ${smsMessage}
+			rm -f ${smsMessage}
+		else
+			echo "MariaDB recovered, status is: ${mariadbStatus}" | tee -a ${logFile}
+		fi
+	else
+		echo "successful restart" | tee -a ${logFile}
+	fi
+else
+	echo -e "\nmysql seems to be working at $(date +%F_%R)\n" >> ${logFile}
+fi

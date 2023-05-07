@@ -1,0 +1,16 @@
+#!/bin/bash
+homeDir="/root/scripts/eyoklamaLogCheck"
+dayNo=$(date +%w)
+
+cd ${homeDir}
+./logcheck.sh > daily.report
+# also add weekly log into email at Mondays
+if [ ${dayNo} -eq 1 ] ; then
+  ./weeklycheck.sh >> daily.report
+fi
+
+# sendmail
+python ${homeDir}/send-email.py -i daily.report
+
+# delete created file(s)
+rm -f daily.report

@@ -1,0 +1,59 @@
+# py file
+import os
+import sys, getopt
+import requests, time, calendar, hashlib, io
+
+if len(sys.argv) < 2:
+    print("Eksik Parametre")
+    sys.exit()
+
+file_name = ''
+
+try:
+    opts, args = getopt.getopt(sys.argv[1:],"hi:",["ifile="])
+except getopt.GetoptError:
+    print 'SMSsendviaAPI.py -i <inputfile>'
+    sys.exit(2)
+for opt, arg in opts:
+    if opt == '-h':
+       print 'SMSsendviaAPI.py -i <inputfile>'
+       sys.exit()
+    elif opt in ("-i", "--ifile"):
+       file_name = arg
+
+if not os.path.exists(file_name):
+    print("Dosya Bulunamadi")
+
+def sendSMS(phone):
+    reqtime = calendar.timegm(time.gmtime())
+    #string_to_hash = str(reqtime) + 'f8nnyjcvfaa93xz3umug28agd'
+    hkey = hashlib.sha512(str(str(reqtime) + 'f8nnyjcvfaa93xz3umug28agd').encode('utf-8')).hexdigest()
+    url = "https://ms.cevizsoft.com/sms/v1/send1"
+    # read sms message body from a file
+    read_file = io.open(file_name, "r", encoding = "utf8")
+    smsMessage = read_file.read()
+    read_file.close()
+#    with open("smsMessage.txt", "r") as f:
+#      smsMessage = f.read()
+#      f.close()
+    payload = {
+        'phone_number': phone,
+        'message_text': smsMessage
+    }
+    files = []
+    headers = {
+        'Req-Time': str(reqtime),
+        'Key': hkey
+    }
+# 'Content-Type': 'application/json',
+# 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.64 Safari/537.11',
+# 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+
+    try:
+        response = requests.request("POST", url, headers=headers, data=payload, files=files)
+        print(response.text)
+    except:
+        print('Error occurred while sending sms!')
+
+print(calendar.timegm(time.gmtime()))
+sendSMS("0555XXX")

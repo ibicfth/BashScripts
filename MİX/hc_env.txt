@@ -1,0 +1,21 @@
+# this file is used by system scripts
+# it seperates sensitive info from running script
+# put a space between variables, scripts read via awk with space delimiter
+
+# credentials for local database 
+dbUser= 
+dbPass= 
+
+# credentials for slave database if exists
+slaveUser= 
+slavePass= 
+slavePort= 
+slaveHost= 
+
+# general system info
+scriptDir= /home/scripts
+mysqlDir= /var/lib/mysql
+
+# credentials for a container
+containerNameUser= 
+containerNamePass= 
